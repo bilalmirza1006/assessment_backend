@@ -8,6 +8,7 @@ require('dotenv').config();
 const path = require('path');
 const services = require('./services');
 const Message = require('./model/Message');
+const ChatList = require('./model/ChatList');
 // const { services } = require('./services');
 
 const PORT = process.env.PORT || 5000;
@@ -126,9 +127,8 @@ io.on('connection', (socket) => {
         callback(rooms);
     });
 
-
-
-    socket.on("message", async ({ content, senderId, receiverId, roomId }) => {
+    // socket logic inside your connection callback
+    socket.on('message', async ({ content, senderId, receiverId, roomId }) => {
         try {
             const message = new Message({
                 content,
@@ -137,6 +137,12 @@ io.on('connection', (socket) => {
                 timestamp: new Date(),
             });
             await message.save();
+
+            // Update ChatList for the sender
+            await updateChatList(senderId, receiverId, message);
+
+            // Update ChatList for the receiver
+            await updateChatList(receiverId, senderId, message);
 
             io.to(roomId).emit("newMessage", {
                 content: message.content,
@@ -149,6 +155,48 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Helper function to update the chat list for both users
+    async function updateChatList(userId1, userId2, message) {
+        const participants = [userId1, userId2].sort();
+        const chatList = await ChatList.findOne({ participants });
+
+        if (chatList) {
+            // Update existing chat list entry
+            chatList.lastMessage = message._id;
+            chatList.lastMessageTimestamp = message.timestamp;
+            await chatList.save();
+        } else {
+            // Create new chat list entry
+            await ChatList.create({
+                participants,
+                lastMessage: message._id,
+                lastMessageTimestamp: message.timestamp,
+            });
+        }
+    }
+
+
+    // socket.on("message", async ({ content, senderId, receiverId, roomId }) => {
+    //     try {
+    //         const message = new Message({
+    //             content,
+    //             sender: senderId,
+    //             receiver: receiverId,
+    //             timestamp: new Date(),
+    //         });
+    //         await message.save();
+
+    //         io.to(roomId).emit("newMessage", {
+    //             content: message.content,
+    //             senderId: message.sender,
+    //             receiverId: message.receiver,
+    //             timestamp: message.timestamp,
+    //         });
+    //     } catch (err) {
+    //         console.error("Error saving message:", err);
+    //     }
+    // });
+
 
     // })
     // socket.broadcast.emit('welcome', `${ socket.id} join to the server1`)
@@ -157,6 +205,29 @@ io.on('connection', (socket) => {
         console.log(`Socket disconnected: ${socket.id}`);
     });
 });
+
+// Get chat list for a user
+app.get('/api/getChatList', async (req, res) => {
+    const { userId } = req.query;
+
+    if (!userId) {
+        return res.status(400).json({ message: 'User ID is required' });
+    }
+
+    try {
+        // Fetch chat list entries for the user
+        const chatLists = await ChatList.find({ participants: userId })
+            .populate('participants', 'name email')  // Populate the user details
+            .populate('lastMessage', 'content timestamp')  // Populate last message details
+            .sort({ 'lastMessageTimestamp': -1 }); // Sort by latest message
+
+        res.json(chatLists);
+    } catch (err) {
+        console.error('Error fetching chat list:', err);
+        res.status(500).json({ message: 'Failed to fetch chat list' });
+    }
+});
+
 
 app.get("/messages", async (req, res) => {
     const { senderId, receiverId } = req.query;
