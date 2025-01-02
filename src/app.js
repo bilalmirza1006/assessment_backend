@@ -9,6 +9,7 @@ const path = require('path');
 const services = require('./services');
 const Message = require('./model/Message');
 const ChatList = require('./model/ChatList');
+const Conversation = require('./model/Conversation');
 // const { services } = require('./services');
 
 const PORT = process.env.PORT || 5000;
@@ -36,66 +37,106 @@ const io = new Server(server, {
 });
 
 const userRooms = new Map();
+let users = [];  // Ensure this is defined outside the event listener so it's accessible globally
+
 io.on('connection', (socket) => {
     console.log(`Socket connected: ${socket.id}`);
 
-    // Check if the socket is connected
-    // console.log(`Is socket connected? ${socket.connected}`);
-    // socket.on('socket-message', message => {
-    //     console.log("new mesage", message);
-    // socket.on('message', (message) => {
-    //     // io.emit('newMessage',    message);
-    //     // console.log("new mesage", message);
-    //     // socket.broadcast.emit('newMessage', message);
-    //     // io.to(message.room).emit('newMessage', message);
-    //     // io.to(message.room).emit('messageStatusUpdate', {
-    //     //     messageId: message._id,
-    //     //     status: message.status,
-    //     // });
-    // })
-    // socket.on('message', async ({ content, senderId, receiverId }) => {
-    //     try {
-    //         console.log("Received message event", { content, senderId, receiverId });
 
-    //         // Create and save the message to the database
-    //         const message = new Message({
-    //             content,
-    //             sender: senderId,
-    //             receiver: receiverId,
-    //             timestamp: new Date(),
-    //         });
+    socket.on("adduser", (usersId) => {
+        console.log("adduser", usersId);
 
-    //         console.log("Saving message to database:", message);
-    //         await message.save();
-    //         console.log(`Message saved: ${message}`);
+        // Check if the user is already in the list
+        const isUserExist = users.find(user => user.usersId === usersId);
+        console.log("isUserExist", isUserExist);
 
-    //         // Emit the message to both the sender and receiver
-    //         console.log(`Emitting message to sender: ${senderId}`);
-    //         io.to(senderId).emit('newMessage', {
-    //             content: message.content,
-    //             senderId: message.sender,
-    //             receiverId: message.receiver,
-    //             timestamp: message.timestamp,
-    //             status: message.status, // e.g., delivered, read
-    //         });
+        if (!isUserExist) {
+            // If the user doesn't exist, add the user to the list
+            const user = { usersId, socketId: socket.id };
+            users.push(user);
+            console.log("users", users);
 
-    //         console.log(`Emitting message to receiver: ${receiverId}`);
-    //         io.to(receiverId).emit('newMessage', {
-    //             content: message.content,
-    //             senderId: message.sender,
-    //             receiverId: message.receiver,
-    //             timestamp: message.timestamp,
-    //             status: message.status,
-    //         });
-    //     } catch (err) {
-    //         console.error(`Error handling message: ${err.message}`);
-    //         socket.emit('error', { message: 'Failed to send message.' });
-    //     }
-    // });
-    // socket.on("joinRoom", ({ roomId }) => {
-    //     socket.join(roomId);
-    //     console.log(`User joined room: ${roomId}`);
-    // });
+            // Emit the updated list of users to all clients
+            io.emit("getUsers", users);
+        } else {
+            // If the user already exists, log that information
+            console.log("User already exists");
+        }
+
+        socket.on("message", ({ content, senderId, receiverId }) => {
+            // Emit the message to the recipient
+            const recipientSocket = users.find(user => user.usersId === receiverId)?.socketId;
+            console.log("recipientSocket", recipientSocket);
+            if (recipientSocket) {
+                io.to(recipientSocket).emit("reciveMessage", { content, senderId, receiverId });
+            }
+        })
+
+        socket.on('message', async ({ content, senderId, receiverId }) => {
+            try {
+                console.log("Received message event", { content, senderId, receiverId });
+
+                // Create and save the message to the database
+                const message = new Message({
+                    content,
+                    sender: senderId,
+                    receiver: receiverId,
+                    timestamp: new Date(),
+                });
+
+                console.log("Saving message to database:", message);
+                await message.save();
+                console.log(`Message saved: ${message}`);
+
+
+                const recipientSocket = users.find(user => user.usersId === receiverId)?.socketId;
+                console.log("recipientSocket", recipientSocket);
+                if (recipientSocket) {
+                    io.to(recipientSocket).emit("reciveMessage", { content, senderId, receiverId });
+                }
+                // Emit the message to both the sender and receiver
+                await updateChatList(senderId, receiverId, message);
+
+                //         // Update ChatList for the receiver
+                await updateChatList(receiverId, senderId, message);
+                console.log(`Emitting message to sender: ${senderId}`);
+                io.to(recipientSocket).emit('reciveMessage', {
+                    content: message.content,
+                    senderId: message.sender,
+                    receiverId: message.receiver,
+                    timestamp: message.timestamp,
+                    status: message.status, // e.g., delivered, read
+                });
+
+                console.log(`Emitting message to receiver: ${receiverId}`);
+                io.to(recipientSocket).emit('reciveMessage', {
+                    content: message.content,
+                    senderId: message.sender,
+                    receiverId: message.receiver,
+                    timestamp: message.timestamp,
+                    status: message.status,
+                });
+            } catch (err) {
+                console.error(`Error handling message: ${err.message}`);
+                socket.emit('error', { message: 'Failed to send message.' });
+            }
+        });
+
+        socket.on("disconnect", () => {
+            users = users.filter(user => user.socketId !== socket.id)
+            io.emit("getUsers", users);
+        })
+    });
+
+    console.log("allllllll users", users);
+
+   
+    socket.on("joinRoom", ({ roomId }) => {
+        socket.join(roomId);
+        console.log(`User joined room: ${roomId}`);
+    });
+
+
 
     socket.on("joinRoom", ({ userId, authorId }) => {
         console.log(`is joining room with ${userId}  ${authorId}`);
@@ -116,7 +157,7 @@ io.on('connection', (socket) => {
         }
         userRooms.get(authorId).add(roomId);
 
-        console.log("Rooms:", userRooms);
+        // console.log("Rooms:", userRooms);
         // Notify the user they've joined
         socket.emit("joinedRoom", roomId);
     });
@@ -127,33 +168,7 @@ io.on('connection', (socket) => {
         callback(rooms);
     });
 
-    // socket logic inside your connection callback
-    socket.on('message', async ({ content, senderId, receiverId, roomId }) => {
-        try {
-            const message = new Message({
-                content,
-                sender: senderId,
-                receiver: receiverId,
-                timestamp: new Date(),
-            });
-            await message.save();
-
-            // Update ChatList for the sender
-            await updateChatList(senderId, receiverId, message);
-
-            // Update ChatList for the receiver
-            await updateChatList(receiverId, senderId, message);
-
-            io.to(roomId).emit("newMessage", {
-                content: message.content,
-                senderId: message.sender,
-                receiverId: message.receiver,
-                timestamp: message.timestamp,
-            });
-        } catch (err) {
-            console.error("Error saving message:", err);
-        }
-    });
+    
 
     // Helper function to update the chat list for both users
     async function updateChatList(userId1, userId2, message) {
@@ -175,32 +190,6 @@ io.on('connection', (socket) => {
         }
     }
 
-
-    // socket.on("message", async ({ content, senderId, receiverId, roomId }) => {
-    //     try {
-    //         const message = new Message({
-    //             content,
-    //             sender: senderId,
-    //             receiver: receiverId,
-    //             timestamp: new Date(),
-    //         });
-    //         await message.save();
-
-    //         io.to(roomId).emit("newMessage", {
-    //             content: message.content,
-    //             senderId: message.sender,
-    //             receiverId: message.receiver,
-    //             timestamp: message.timestamp,
-    //         });
-    //     } catch (err) {
-    //         console.error("Error saving message:", err);
-    //     }
-    // });
-
-
-    // })
-    // socket.broadcast.emit('welcome', `${ socket.id} join to the server1`)
-    // Handle disconnection
     socket.on('disconnect', () => {
         console.log(`Socket disconnected: ${socket.id}`);
     });
@@ -227,6 +216,7 @@ app.get('/api/getChatList', async (req, res) => {
         res.status(500).json({ message: 'Failed to fetch chat list' });
     }
 });
+app.use(express.urlencoded({ extended: true }));
 
 
 app.get("/messages", async (req, res) => {
