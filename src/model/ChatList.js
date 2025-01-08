@@ -11,19 +11,24 @@ const mongoose = require('mongoose');
 // });
 
 
+// const mongoose = require("mongoose");
+
 const chatListSchema = new mongoose.Schema({
+    chatKey: {
+        type: String,
+        required: true,
+        unique: true, // Ensure only one entry per sender-receiver pair
+    },
     participants: {
         type: [String],
         required: true,
-        unique: true, // Ensure no duplicates
     },
-    lastMessage: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
+    lastMessage: { type: mongoose.Schema.Types.ObjectId, ref: "Message" },
     lastMessageTimestamp: { type: Date },
 });
 
-// Ensure proper indexing for participants
-chatListSchema.index({ participants: 1 });
+// Create an index for faster lookups
+chatListSchema.index({ chatKey: 1 });
 
+module.exports = mongoose.model("ChatList", chatListSchema);
 
-
-module.exports = mongoose.model('ChatList', chatListSchema);
