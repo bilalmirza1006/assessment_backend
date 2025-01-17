@@ -244,41 +244,41 @@ io.on("connection", (socket) => {
     });
 
     // Handle messages and update chat list
-    socket.on("message", async ({ content, senderId, receiverId }) => {
-        console.log(" receiver message ", { content, senderId, receiverId });
+    socket.on("message", async ({ msg, sender, receiverId }) => {
+        console.log(" receiver message ", { msg, sender, receiverId });
         try {
-            console.log("Received message event", { content, senderId, receiverId });
+            console.log("Received message event", {msg, sender, receiverId });
 
             // Save message to the database
             const message = new Message({
-                content,
-                sender: senderId,
+                message: msg,
+                sender: sender,
                 receiver: receiverId,
                 timestamp: new Date(),
             });
             await message.save();
 
             // Update chat list
-            await updateChatList(senderId, receiverId, message);
+            await updateChatList(sender, receiverId, message);
 
 
             const recipientSocket = users.find(user => user.usersId === receiverId)?.socketId;
             console.log("recipientSocket", recipientSocket);
             if (recipientSocket) {
-                io.to(recipientSocket).emit("reciveMessage", { content, senderId, receiverId });
+                io.to(recipientSocket).emit("reciveMessage", { msg, sender, receiverId });
             }
 
             // Emit message to recipient
             // const recipientSocket = users.find(user => user.usersId === receiverId)?.socketId;
 
-            if (recipientSocket) {
-                io.to(recipientSocket).emit("reciveMessage", {
-                    content: message.content,
-                    senderId: message.sender,
-                    receiverId: message.receiver,
-                    timestamp: message.timestamp,
-                });
-            }
+            // if (recipientSocket) {
+            //     io.to(recipientSocket).emit("reciveMessage", {
+            //         content: message.content,
+            //         sender: message.sender,
+            //         receiverId: message.receiver,
+            //         timestamp: message.timestamp,
+            //     });
+            // }
 
             console.log(`Message sent to ${receiverId} and saved.`);
         } catch (err) {
@@ -335,10 +335,10 @@ io.on("connection", (socket) => {
 
 //     await chatList.save();
 // }
-async function updateChatList(senderId, receiverId, message) {
+async function updateChatList(sender, receiverId, message) {
     try {
         // Create a unique key by sorting user IDs
-        const chatKey = [senderId, receiverId].sort().join("-");
+        const chatKey = [sender, receiverId].sort().join("-");
         console.log("chatKey:", chatKey);
 
         let chatList = await ChatList.findOne({ chatKey });
@@ -352,7 +352,7 @@ async function updateChatList(senderId, receiverId, message) {
             // Create a new chat list entry
             chatList = new ChatList({
                 chatKey,
-                participants: [senderId, receiverId].sort(),
+                participants: [sender, receiverId].sort(),
                 lastMessage: message._id,
                 lastMessageTimestamp: message.timestamp,
             });
